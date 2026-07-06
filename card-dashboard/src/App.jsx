@@ -149,7 +149,9 @@ function CompareTable({ rows, firstColLabel, selfMin }) {
       byCarrier[r.carrier] = Math.max(byCarrier[r.carrier] ?? -Infinity, d)
     }
     for (const [c, maxDisc] of Object.entries(byCarrier)) {
-      carrierWeak[c] = maxDisc < selfMin // 그 가맹점 최고 최저구간할인 < 아정당 → 열위
+      // 미만 → '유리', 정확히 동률 → '동률'. 둘 다 초록 하이라이트.
+      if (maxDisc < selfMin) carrierWeak[c] = 'below'
+      else if (maxDisc === selfMin) carrierWeak[c] = 'equal'
     }
   }
 
@@ -177,7 +179,7 @@ function CompareTable({ rows, firstColLabel, selfMin }) {
         </thead>
         <tbody>
           {data.map((r, i) => {
-            const weak = !r._self && carrierWeak[r.carrier]
+            const weak = !r._self ? carrierWeak[r.carrier] : undefined  // 'below' | 'equal' | undefined
             return (
             <tr
               key={i}
@@ -194,10 +196,18 @@ function CompareTable({ rows, firstColLabel, selfMin }) {
                     'border border-slate-200 px-2 py-1 text-center font-semibold align-middle ' +
                     (r._self ? 'bg-amber-200/60' : (weak ? 'ajd-weak-cell' : 'bg-slate-100'))
                   }
-                  title={weak ? '최저구간 할인이 아정당보다 낮음 (아정당 카드 유리)' : undefined}
+                  title={
+                    weak === 'below' ? '최저구간 할인이 아정당보다 낮음 (아정당 카드 유리)'
+                    : weak === 'equal' ? '최저구간 할인이 아정당과 동일 (동률)'
+                    : undefined
+                  }
                 >
                   {r.carrier}
-                  {weak && <span className="block text-[10px] font-normal text-emerald-800 mt-0.5">아정당 유리</span>}
+                  {weak && (
+                    <span className="block text-[10px] font-normal text-emerald-800 mt-0.5">
+                      {weak === 'equal' ? '아정당 동률' : '아정당 유리'}
+                    </span>
+                  )}
                 </td>
               )}
               <td className="border border-slate-200 px-2 py-1 text-center whitespace-nowrap">{r.issuer}</td>
