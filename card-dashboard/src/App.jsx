@@ -130,13 +130,38 @@ function Cell({ v, money, isTier }) {
   )
 }
 
-function CompareTable({ rows, firstColLabel }) {
+function CompareTable({ rows, firstColLabel, selfMin }) {
   const data = withRowspan(rows)
   if (!data.length)
     return <div className="text-slate-400 text-sm py-8 text-center">표시할 카드가 없습니다.</div>
 
+  // 가맹점(carrier)별 "최저구간 할인 최댓값" 계산 → 아정당 기준(selfMin) 미달 판정
+  //  · 아정당 자신은 제외
+  //  · discMin(=최저구간 시점 할인)이 있는 카드만 집계. 전부 없으면 판정 스킵(null)
+  //  · 목적: 아정당 카드 판매용. "이 가맹점은 최저구간 할인이 우리보다 약함" 내부 신호.
+  const carrierWeak = {}
+  if (selfMin != null) {
+    const byCarrier = {}
+    for (const r of data) {
+      if (r._self) continue
+      const d = r.discMin
+      if (d == null) continue
+      byCarrier[r.carrier] = Math.max(byCarrier[r.carrier] ?? -Infinity, d)
+    }
+    for (const [c, maxDisc] of Object.entries(byCarrier)) {
+      carrierWeak[c] = maxDisc < selfMin // 그 가맹점 최고 최저구간할인 < 아정당 → 열위
+    }
+  }
+
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+      <style>{`
+        @keyframes ajdSoftPulse {
+          0%, 100% { background-color: rgba(74,222,128,0.18); }
+          50%      { background-color: rgba(74,222,128,0.45); }
+        }
+        .ajd-weak-cell { animation: ajdSoftPulse 2.2s ease-in-out infinite; }
+      `}</style>
       <table className="w-full border-collapse text-[13px]">
         <thead className="sticky top-0 z-10">
           <tr className="bg-slate-700 text-white">
@@ -151,7 +176,9 @@ function CompareTable({ rows, firstColLabel }) {
           </tr>
         </thead>
         <tbody>
-          {data.map((r, i) => (
+          {data.map((r, i) => {
+            const weak = !r._self && carrierWeak[r.carrier]
+            return (
             <tr
               key={i}
               className={
@@ -165,10 +192,12 @@ function CompareTable({ rows, firstColLabel }) {
                   rowSpan={r._carrierSpan}
                   className={
                     'border border-slate-200 px-2 py-1 text-center font-semibold align-middle ' +
-                    (r._self ? 'bg-amber-200/60' : 'bg-slate-100')
+                    (r._self ? 'bg-amber-200/60' : (weak ? 'ajd-weak-cell' : 'bg-slate-100'))
                   }
+                  title={weak ? '최저구간 할인이 아정당보다 낮음 (아정당 카드 유리)' : undefined}
                 >
                   {r.carrier}
+                  {weak && <span className="block text-[10px] font-normal text-emerald-800 mt-0.5">아정당 유리</span>}
                 </td>
               )}
               <td className="border border-slate-200 px-2 py-1 text-center whitespace-nowrap">{r.issuer}</td>
@@ -179,7 +208,7 @@ function CompareTable({ rows, firstColLabel }) {
               <Cell v={r.tierMax} isTier />
               <Cell v={r.discMax} money />
             </tr>
-          ))}
+          )})}
         </tbody>
       </table>
     </div>
@@ -218,6 +247,16 @@ export default function App() {
     () => pivot(rows.filter((r) => CFG.RENTAL_CATS.includes(r.category))),
     [rows]
   )
+
+  // 아정당 최저구간 기준값 T (탭별). 아정당 카드들 중 discMin(최저구간 할인) 최댓값.
+  //  · 우리 18,000 vs 하나 15,000 → 18,000. 이 값 미만인 가맹점을 '아정당 유리'로 표시.
+  //  · 필터로 아정당이 걸러져도 판정이 유지되도록 '필터 전' 원본에서 계산해 넘김.
+  const selfMinOf = (arr) => {
+    const ds = arr.filter((r) => r._self).map((r) => r.discMin).filter((v) => v != null)
+    return ds.length ? Math.max(...ds) : null
+  }
+  const telSelfMin = useMemo(() => selfMinOf(telRows), [telRows])
+  const rentalSelfMin = useMemo(() => selfMinOf(rentalRows), [rentalRows])
 
   // 현재 탭의 카드사(issuer) 목록 + 선택된 필터
   const [issuerFilter, setIssuerFilter] = useState('전체')
@@ -286,7 +325,11 @@ export default function App() {
       )}
 
       {!loading && !err && (
-        <CompareTable rows={filteredRows} firstColLabel={tab === '통신' ? '통신사' : '가맹점'} />
+        <CompareTable
+          rows={filteredRows}
+          firstColLabel={tab === '통신' ? '통신사' : '가맹점'}
+          selfMin={tab === '통신' ? telSelfMin : rentalSelfMin}
+        />
       )}
     </div>
   )
