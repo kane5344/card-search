@@ -30,6 +30,57 @@ WATCHLIST_B = {
 }
 GRID = [30,40,50,60,70,80,100,120,150,200]
 
+# ── 고정 자사(아정당) 데이터 ─────────────────────────────────
+# 스크래이프 대상이 아니라 수기 관리 행. Supabase는 매 실행마다 date=today를 지우고
+# 다시 넣으므로, 여기 없으면 자사가 최신 날짜에서 사라진다(대시보드는 최신 날짜만 표시).
+# → 매 실행 시 '실행일 날짜'로 함께 INSERT. date만 실행일, 나머지 값은 고정.
+SELF_ROWS = [
+    # 아정당 우리카드 — 통신
+    {"category":"통신","carrier":"아정당","carrier2":"아정당","issuer":"우리","card_name":"아정당 우리카드",
+     "tel":"1588-9955","fee":"23,000원","spend_tier":30,"type":"기본","discount":18000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/detail/296","note":"자사(파싱)",
+     "promo_month":"","benefit_months":""},
+    {"category":"통신","carrier":"아정당","carrier2":"아정당","issuer":"우리","card_name":"아정당 우리카드",
+     "tel":"1588-9955","fee":"23,000원","spend_tier":70,"type":"기본","discount":21000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/detail/296","note":"자사(파싱)",
+     "promo_month":"","benefit_months":""},
+    {"category":"통신","carrier":"아정당","carrier2":"아정당","issuer":"우리","card_name":"아정당 우리카드",
+     "tel":"1588-9955","fee":"23,000원","spend_tier":160,"type":"기본","discount":26000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/detail/296","note":"자사(파싱)",
+     "promo_month":"","benefit_months":""},
+    # 아정당 우리카드 — 렌탈
+    {"category":"렌탈","carrier":"아정당","carrier2":"아정당","issuer":"우리","card_name":"아정당 우리카드",
+     "tel":"1588-9955","fee":"23,000원","spend_tier":30,"type":"기본","discount":18000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/detail/296","note":"자사(파싱)",
+     "promo_month":"7월","benefit_months":"60"},
+    {"category":"렌탈","carrier":"아정당","carrier2":"아정당","issuer":"우리","card_name":"아정당 우리카드",
+     "tel":"1588-9955","fee":"23,000원","spend_tier":70,"type":"기본","discount":21000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/detail/296","note":"자사(파싱)",
+     "promo_month":"7월","benefit_months":"60"},
+    {"category":"렌탈","carrier":"아정당","carrier2":"아정당","issuer":"우리","card_name":"아정당 우리카드",
+     "tel":"1588-9955","fee":"23,000원","spend_tier":160,"type":"기본","discount":26000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/detail/296","note":"자사(파싱)",
+     "promo_month":"7월","benefit_months":"60"},
+    # 아정당 하나카드 — 통신
+    {"category":"통신","carrier":"아정당","carrier2":"아정당","issuer":"하나","card_name":"아정당 하나카드",
+     "tel":"1800-1111","fee":"29,000원","spend_tier":30,"type":"기본","discount":15000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/list","note":"자사(고정값)",
+     "promo_month":"","benefit_months":""},
+    {"category":"통신","carrier":"아정당","carrier2":"아정당","issuer":"하나","card_name":"아정당 하나카드",
+     "tel":"1800-1111","fee":"29,000원","spend_tier":120,"type":"기본","discount":20000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/list","note":"자사(고정값)",
+     "promo_month":"","benefit_months":""},
+    # 아정당 하나카드 — 렌탈
+    {"category":"렌탈","carrier":"아정당","carrier2":"아정당","issuer":"하나","card_name":"아정당 하나카드",
+     "tel":"1800-1111","fee":"29,000원","spend_tier":30,"type":"기본","discount":15000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/list","note":"자사(고정값)",
+     "promo_month":"7월","benefit_months":""},
+    {"category":"렌탈","carrier":"아정당","carrier2":"아정당","issuer":"하나","card_name":"아정당 하나카드",
+     "tel":"1800-1111","fee":"29,000원","spend_tier":120,"type":"기본","discount":20000,
+     "disc_type":"청구할인","apply_url":"https://www.ajd.co.kr/card/event/list","note":"자사(고정값)",
+     "promo_month":"7월","benefit_months":""},
+]
+
 def parse_lghello(html):
     soup=BeautifulSoup(html,"lxml"); out=[]
     for info in soup.select("div.item-info"):
@@ -756,11 +807,19 @@ def main():
     except Exception as e:
         report.append(("통신","KT",0,f"FAIL: {e}")); errs.append(("통신","KT"))
 
+    # ── 2-c) 고정 자사(아정당) ──────────────────────────────
+    # 스크래이프 결과(longs)와 분리해서 둔다. longs는 '스크래이프 성공 여부' 판정에 쓰이므로
+    # 여기에 섞으면 전체 스크래이프 실패 시에도 DELETE가 돌아 오늘 데이터가 날아간다.
+    self_long=[[today,r["category"],r["carrier"],r["carrier2"],r["issuer"],r["card_name"],r["tel"],r["fee"],
+                r["spend_tier"],r["type"],r["discount"],r["disc_type"],r["apply_url"],r["note"]]
+               for r in SELF_ROWS]
+    report.append(("자사","아정당",len({r["card_name"] for r in SELF_ROWS}),f"OK (고정값 {len(SELF_ROWS)}행)"))
+
     # ── 3) CSV 저장 (확장 컬럼) ─────────────────────────────
     LONG_HEAD=["date","category","carrier","carrier2","issuer","card_name","tel","fee",
                "spend_tier","type","discount","disc_type","apply_url","note"]
     with open(f"card_long_{today}.csv","w",newline="",encoding="utf-8-sig") as f:
-        w=csv.writer(f); w.writerow(LONG_HEAD); w.writerows(longs)
+        w=csv.writer(f); w.writerow(LONG_HEAD); w.writerows(longs+self_long)
     with open(f"card_grid_{today}.csv","w",newline="",encoding="utf-8-sig") as f:
         w=csv.writer(f); w.writerow(["date","category","key","card_name","fee"]+[f"기본_{g}만" for g in GRID]+[f"프로모_{g}만" for g in GRID]); w.writerows(grids)
 
@@ -772,7 +831,7 @@ def main():
         flag="✅" if status=="OK" else ("⚠️ " if "0건" in status else "❌")
         print(f"  {flag} [{kind}] {name:14s} {n:3d}장  {status}")
     print("="*56)
-    print(f"  long {len(longs)}행 / grid {len(grids)}장 → card_long_{today}.csv")
+    print(f"  long {len(longs)+len(self_long)}행(자사 {len(self_long)}행 포함) / grid {len(grids)}장 → card_long_{today}.csv")
     if errs: print(f"  실패: {errs}")
 
     # ── 5) Supabase 적재 (오늘 날짜 먼저 삭제 → 재적재: 누적/중복 방지) ──
@@ -786,8 +845,8 @@ def main():
             print("  Supabase DELETE(today):",dresp.status_code,"OK" if dresp.status_code<300 else dresp.text[:200])
         except Exception as e:
             print("  Supabase DELETE 실패:",e)
-        # (b) 재적재
-        pl=[dict(zip(LONG_HEAD,r)) for r in longs]
+        # (b) 재적재 — 스크래이프 결과 + 고정 자사(아정당) 행(실행일 날짜)
+        pl=[dict(zip(LONG_HEAD,r)) for r in longs]+[dict(r,date=today) for r in SELF_ROWS]
         resp=requests.post(f"{su}/rest/v1/card_benefit2",
             headers={**hdr,"Prefer":"return=minimal"},
             data=json.dumps(pl,ensure_ascii=False).encode("utf-8"),timeout=30)
