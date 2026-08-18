@@ -738,7 +738,10 @@ def dlive_page2(url):
         return ""
 
 def main():
-    today=datetime.date.today().isoformat()
+    # GitHub Actions 러너는 UTC. cron 22:00 UTC = 07:00 KST(다음날)이라
+    # date.today()를 쓰면 매 실행이 '어제 날짜'로 찍힌다 → KST 기준으로 고정.
+    today=(datetime.datetime.now(datetime.timezone.utc)
+           +datetime.timedelta(hours=9)).date().isoformat()
     longs=[]; grids=[]; errs=[]; report=[]
 
     # ── 1) 렌탈 (기존) ──────────────────────────────────────

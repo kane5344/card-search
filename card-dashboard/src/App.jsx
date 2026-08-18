@@ -235,12 +235,38 @@ export default function App() {
   useEffect(() => {
     ;(async () => {
       try {
-        const { data, error } = await supabase.from('card_benefit2').select('*').limit(5000)
-        if (error) throw error
-        const dates = data.map((r) => r.date).filter(Boolean).sort()
-        const newest = dates[dates.length - 1] || null
+        // 1) 최신 날짜를 DB에서 직접 구한다.
+        //    전체를 받아와 클라이언트에서 max를 구하면 안 된다 — PostgREST가 응답을
+        //    1000행으로 자르기 때문에(limit 5000을 줘도) 잘린 조각의 '최신 날짜'는
+        //    실제 최신일이 아니고, 그 날짜 행도 몇 개만 딸려와 카드가 2~3장만 뜬다.
+        const { data: d1, error: e1 } = await supabase
+          .from('card_benefit2')
+          .select('date')
+          .not('date', 'is', null)
+          .order('date', { ascending: false })
+          .limit(1)
+        if (e1) throw e1
+        const newest = d1?.[0]?.date || null
         setLatestDate(newest)
-        setRows(newest ? data.filter((r) => r.date === newest) : data)
+        if (!newest) {
+          setRows([])
+          return
+        }
+
+        // 2) 그 날짜 행만 페이지네이션으로 전부 가져온다(하루치가 1000행을 넘겨도 안전).
+        const PAGE = 1000
+        const all = []
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await supabase
+            .from('card_benefit2')
+            .select('*')
+            .eq('date', newest)
+            .range(from, from + PAGE - 1)
+          if (error) throw error
+          all.push(...(data || []))
+          if (!data || data.length < PAGE) break
+        }
+        setRows(all)
       } catch (e) {
         setErr(e.message || String(e))
       } finally {
