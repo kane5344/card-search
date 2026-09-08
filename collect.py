@@ -849,11 +849,21 @@ def main():
         except Exception as e:
             print("  Supabase DELETE 실패:",e)
         # (b) 재적재 — 스크래이프 결과 + 고정 자사(아정당) 행(실행일 날짜)
-        pl=[dict(zip(LONG_HEAD,r)) for r in longs]+[dict(r,date=today) for r in SELF_ROWS]
+        #     PostgREST 벌크 insert는 배열 안 모든 객체의 키가 완전히 같아야 한다
+        #     (안 그러면 PGRST102 "All object keys must match"로 배치 전체가 400).
+        #     longs는 LONG_HEAD 14키, SELF_ROWS는 promo_month/benefit_months가 더 있으므로
+        #     DB_HEAD로 키를 통일하고 없는 값은 None(NULL)으로 채운다.
+        DB_HEAD=LONG_HEAD+["promo_month","benefit_months"]
+        raw=[dict(zip(LONG_HEAD,r)) for r in longs]+[dict(r,date=today) for r in SELF_ROWS]
+        pl=[{k:d.get(k) for k in DB_HEAD} for d in raw]
         resp=requests.post(f"{su}/rest/v1/card_benefit2",
             headers={**hdr,"Prefer":"return=minimal"},
             data=json.dumps(pl,ensure_ascii=False).encode("utf-8"),timeout=30)
         print("  Supabase INSERT:",resp.status_code,"OK" if resp.status_code<300 else resp.text[:200])
+        # 적재 실패는 반드시 워크플로를 실패시킨다 — 예전엔 여기서 그냥 넘어가서
+        # CSV 커밋만 계속되고 DB가 3주간 멈춘 걸 아무도 몰랐다.
+        if resp.status_code>=300:
+            raise SystemExit(f"Supabase INSERT 실패 {resp.status_code}: {resp.text[:300]}")
     elif not(su and sk):
         print("  Supabase 미설정 → CSV만 생성")
 
