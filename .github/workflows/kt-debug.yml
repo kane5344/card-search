@@ -1,0 +1,46 @@
+name: kt-debug
+on: { workflow_dispatch: {} }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install requests
+      - name: probe savedream / hcn
+        run: |
+          python3 - <<'PY'
+          import requests
+          print("RUNNER_IP:", requests.get("https://api.ipify.org", timeout=10).text)
+          UA_OLD = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
+          UA_NEW = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
+          url = "https://savedream.co.kr/api/v1/card-detail?prodId=82b3fe07-44ea-4aef-aed9-0d49b54168f7"
+          cases = {
+            "A. 현재 collect.py 헤더": {"User-Agent": UA_OLD, "Accept": "application/json, text/plain, */*",
+                                        "Referer": "https://product.kt.com/", "Origin": "https://product.kt.com"},
+            "B. Origin 제거":          {"User-Agent": UA_OLD, "Accept": "application/json, text/plain, */*",
+                                        "Referer": "https://product.kt.com/"},
+            "C. 최신 UA + 브라우저 헤더": {"User-Agent": UA_NEW, "Accept": "application/json, text/plain, */*",
+                                        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8",
+                                        "Accept-Encoding": "gzip, deflate, br",
+                                        "Referer": "https://product.kt.com/",
+                                        "sec-ch-ua": '"Chromium";v="140", "Not=A?Brand";v="24"',
+                                        "sec-ch-ua-platform": '"Windows"', "sec-ch-ua-mobile": "?0",
+                                        "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "cross-site"},
+            "D. 헤더 없음":            {},
+          }
+          for label, h in cases.items():
+            try:
+              r = requests.get(url, headers=h, timeout=20)
+              print(f"--- {label}: HTTP {r.status_code} len={len(r.text)} server={r.headers.get('server')}")
+              print("    " + r.text[:900].replace("\n", " "))
+            except Exception as e:
+              print(f"--- {label}: EXC {type(e).__name__}: {e}")
+          for host in ("https://savedream.co.kr/", "https://www.hcn.co.kr/www/event/event3.jsp"):
+            try:
+              r = requests.get(host, headers={"User-Agent": UA_NEW}, timeout=20)
+              print(f"--- ROOT {host}: HTTP {r.status_code} len={len(r.text)}")
+            except Exception as e:
+              print(f"--- ROOT {host}: EXC {type(e).__name__}: {e}")
+          PY
