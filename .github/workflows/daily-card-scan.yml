@@ -16,7 +16,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python3 collect.py
+      # collect.py는 실패 소스가 있으면 마지막에 일부러 non-zero로 죽는다(런을 빨갛게).
+      # 그래도 그날 CSV는 남겨야 하므로 always().
       - name: keep CSV history in repo
+        if: always()
         run: |
           mkdir -p history && mv card_*_*.csv history/ 2>/dev/null || true
           git config user.name  "card-scan-bot"

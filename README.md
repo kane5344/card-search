@@ -44,3 +44,23 @@ python3 collect.py
 
 ## 자동 실행
 `.github/workflows/daily-card-scan.yml` — 매일 07:00 KST. Settings>Secrets에 `SUPABASE_URL`/`SUPABASE_KEY` 등록.
+실패 소스가 하나라도 있으면 런이 **빨갛게 끝난다**(CSV 커밋은 그대로 됨). 초록불 = 24개 소스 전부 수집.
+
+## ⚠️ GitHub Actions에서 안 열리는 사이트 (KT·HCN)
+`savedream.co.kr`(KT 허브)과 `www.hcn.co.kr`은 **출발지 IP로 막힌다.** 헤더·UA 문제가 아니다.
+
+| 사이트 | 러너(Azure 172.x)에서 | 국내 사무실 IP에서 |
+|---|---|---|
+| savedream.co.kr | **403** (Microsoft-Azure-Application-Gateway/v2 WAF) — UA/Referer/Origin 어떻게 바꿔도, 루트 `/`까지 동일 | 200 정상 |
+| www.hcn.co.kr | **TCP connect timeout** (방화벽 drop) | 200 정상 |
+
+그래서 CI 결과는 매일 KT 0장·HCN 0장으로 **하루 39행씩 빠진 채** 적재돼 왔다(2026-08-13 최초 실행부터 계속).
+
+**해결: 국내 경유(릴레이) 필요.** `collect.py`가 환경변수 두 개를 읽는다.
+```
+KR_RELAY=https://<국내리전 엔드포인트>/api/fetch   # ?url=<encoded> 로 호출됨
+KR_RELAY_KEY=<공유 시크릿>                        # X-Relay-Key 헤더로 전달(선택)
+```
+- 미설정이면 원본 URL로 직접 요청 → **국내 PC에서 돌릴 땐 설정 불필요**(지금도 로컬 실행은 24개 전부 성공).
+- 릴레이는 `savedream.co.kr`/`hcn.co.kr` 요청에만 적용된다(오픈 프록시 방지를 위해 릴레이 쪽에도 호스트 화이트리스트 필수).
+- 후보: Vercel Function `icn1`(서울) / 사내 서버 / 이 PC를 self-hosted runner로 등록.

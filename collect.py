@@ -234,8 +234,27 @@ def restore(text):
         s=BeautifulSoup(text,"lxml"); return "\n".join(td.get_text() for td in s.select("td.line-content"))
     return text
 
+# ── 국내 IP에서만 열리는 사이트 ──────────────────────────────
+# savedream.co.kr(KT 제휴카드 허브)는 Azure Application Gateway WAF가 GitHub
+# Actions 러너 대역(Azure 172.x)을 헤더와 무관하게 403으로 막는다.
+# www.hcn.co.kr은 아예 TCP connect 타임아웃(방화벽 drop).
+# 둘 다 사무실(국내) IP에서는 정상 200 — 즉 UA/Referer 문제가 아니라 출발지 IP 문제라
+# 국내 경유가 없으면 CI에서는 절대 못 뚫는다.
+KR_ONLY_HOSTS=("savedream.co.kr","hcn.co.kr")
+KR_RELAY=os.environ.get("KR_RELAY","").rstrip("/")      # 예: https://xxx.vercel.app/api/fetch
+KR_RELAY_KEY=os.environ.get("KR_RELAY_KEY","")
+
+def _via_relay(url):
+    """국내 전용 호스트면 릴레이 URL로 감싼다. KR_RELAY 미설정이면 원본 그대로."""
+    if not KR_RELAY: return url,{}
+    if not any(h in url for h in KR_ONLY_HOSTS): return url,{}
+    from urllib.parse import quote
+    hdr={"X-Relay-Key":KR_RELAY_KEY} if KR_RELAY_KEY else {}
+    return f"{KR_RELAY}?url={quote(url,safe='')}",hdr
+
 def fetch(url):
-    r=requests.get(url,headers=UA,timeout=20); r.encoding=r.apparent_encoding or "utf-8"
+    u,rh=_via_relay(url)
+    r=requests.get(u,headers={**UA,**rh},timeout=30); r.encoding=r.apparent_encoding or "utf-8"
     return restore(r.text)
 
 def grid(tiers,kind):
@@ -655,18 +674,26 @@ def parse_kt_detail(jsontext):
     return {**base,"tiers":tiers,"note":note}
 
 def collect_kt():
-    """KT_PRODIDS 순회하며 savedream 상세 API 호출 → 카드 리스트."""
+    """KT_PRODIDS 순회하며 savedream 상세 API 호출 → 카드 리스트.
+
+    전건 실패면 예외를 던진다. 예전엔 여기서 조용히 빈 리스트를 돌려줘서
+    리포트에 '0장 OK'로 찍히고 errs에도 안 들어갔다 → savedream이 GitHub
+    Actions IP를 403으로 막고 있는데도 한 달 내내 아무도 몰랐다.
+    """
     import time
-    out=[]
+    out=[]; fails=[]
     for pid in KT_PRODIDS:
         try:
             raw=fetch_json(KT_DETAIL_API+pid)
-            print(f"  [KT-DEBUG] {pid[:8]} len={len(raw)} head={raw[:80]!r}")
             c=parse_kt_detail(raw)
             if c: out.append(c)
+            else: fails.append(f"{pid[:8]} 파싱실패")
         except Exception as e:
             print(f"  [KT] {pid[:8]} 실패: {e}")
+            fails.append(f"{pid[:8]} {type(e).__name__}")
         time.sleep(0.3)   # rate limit 회피
+    if not out:
+        raise RuntimeError(f"KT {len(fails)}/{len(KT_PRODIDS)}건 전부 실패 ({', '.join(fails[:3])} …)")
     return out
 
 # ════════════════════════════════════════════════════════════
@@ -724,8 +751,11 @@ def fetch_json(url):
         ref={"Referer":"https://m.lguplus.com/"}
     else:
         ref={}
-    r=requests.get(url,headers={**UA,"Accept":"application/json, text/plain, */*",**ref},timeout=20)
+    u,rh=_via_relay(url)
+    r=requests.get(u,headers={**UA,"Accept":"application/json, text/plain, */*",**ref,**rh},timeout=30)
     r.encoding=r.apparent_encoding or "utf-8"
+    if r.status_code>=400:
+        raise RuntimeError(f"HTTP {r.status_code} ({r.headers.get('server','')}) {r.text[:120]!r}")
     return r.text
 
 def dlive_page2(url):
@@ -792,7 +822,11 @@ def main():
     try:
         kt_cards=collect_kt()
         n_auto=sum(1 for c in kt_cards if c["tiers"])
-        report.append(("통신","KT",len(kt_cards),f"OK (구간자동 {n_auto}/{len(kt_cards)}, 나머지 수기플래그)"))
+        # 구간이 한 장도 안 잡히면 사실상 수집 실패 → '0건'으로 찍어 ⚠️ 뜨게 한다
+        st=f"OK (구간자동 {n_auto}/{len(kt_cards)}, 나머지 수기플래그)" if n_auto \
+           else f"0건(구간 0/{len(kt_cards)} — selector확인)"
+        report.append(("통신","KT",len(kt_cards),st))
+        if not n_auto: errs.append(("통신","KT"))
         for c in kt_cards:
             for t in c["tiers"]:
                 longs.append([today,"통신","KT","KT",c.get("issuer",""),c["card_name"],"",c.get("fee",""),
@@ -831,7 +865,9 @@ def main():
     print(f"  수집 리포트 ({today})")
     print("="*56)
     for kind,name,n,status in report:
-        flag="✅" if status=="OK" else ("⚠️ " if "0건" in status else "❌")
+        # status가 "OK (구간자동 …)"처럼 꼬리가 붙는 항목(KT/아정당)이 매일 ❌로 찍혀서
+        # 진짜 실패(HCN·KT 403)가 그 노이즈에 묻혔다 → 접두사로 판정한다.
+        flag="✅" if status.startswith("OK") else ("⚠️ " if "0건" in status else "❌")
         print(f"  {flag} [{kind}] {name:14s} {n:3d}장  {status}")
     print("="*56)
     print(f"  long {len(longs)+len(self_long)}행(자사 {len(self_long)}행 포함) / grid {len(grids)}장 → card_long_{today}.csv")
@@ -866,5 +902,11 @@ def main():
             raise SystemExit(f"Supabase INSERT 실패 {resp.status_code}: {resp.text[:300]}")
     elif not(su and sk):
         print("  Supabase 미설정 → CSV만 생성")
+
+    # ── 6) 실패한 소스가 있으면 워크플로를 빨갛게 ────────────
+    # CSV 저장·Supabase 적재를 다 끝낸 뒤에 죽는다(오늘 데이터는 살린다).
+    # 이걸 안 해서 HCN·KT가 한 달 내내 0장인 채로 초록불이었다.
+    if errs:
+        raise SystemExit(f"수집 실패 소스 {len(errs)}건: {errs}")
 
 if __name__=="__main__": main()
