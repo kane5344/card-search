@@ -252,10 +252,44 @@ def _via_relay(url):
     hdr={"X-Relay-Key":KR_RELAY_KEY} if KR_RELAY_KEY else {}
     return f"{KR_RELAY}?url={quote(url,safe='')}",hdr
 
-def fetch(url):
+# 렌탈 패밀리 A 8곳(코웨이·SK매직·쿠쿠·LG·청호·교원·현대큐밍·루헨스)은 전부 한 서버
+# (14.48.175.138)에 있다. 그 서버가 수집 시각에 잠깐만 끊겨도 8곳이 한꺼번에 0장이 됐다
+# (9/22·9/28 렌탈 215행→34행). 재시도 없이 1회만 부르던 게 원인 → 간격 두고 3회.
+def fetch(url, tries=3, waits=(10,30)):
+    import time
     u,rh=_via_relay(url)
-    r=requests.get(u,headers={**UA,**rh},timeout=30); r.encoding=r.apparent_encoding or "utf-8"
-    return restore(r.text)
+    for i in range(tries):
+        try:
+            r=requests.get(u,headers={**UA,**rh},timeout=30); r.raise_for_status()
+            r.encoding=r.apparent_encoding or "utf-8"
+            return restore(r.text)
+        except Exception:
+            if i==tries-1: raise
+            time.sleep(waits[min(i,len(waits)-1)])
+
+def carry_forward(category, brand, today):
+    """오늘 수집에 실패한 소스를 history/의 가장 최근 정상값으로 채운다.
+    Supabase는 오늘 날짜를 지우고 다시 넣고 대시보드는 최신 날짜만 보여줘서,
+    실패한 사이트가 그날 대시보드에서 통째로 사라지던 문제 방지. note에 원래 날짜를 남긴다."""
+    hist="history"
+    if not os.path.isdir(hist): return [],[]
+    for fn in sorted(os.listdir(hist),reverse=True):
+        m=re.match(r"card_long_(\d{4}-\d{2}-\d{2})\.csv$",fn)
+        if not m or m.group(1)>=today: continue
+        with open(os.path.join(hist,fn),encoding="utf-8-sig") as f:
+            rows=[r for r in csv.reader(f)][1:]
+        rows=[r for r in rows if len(r)>=14 and r[1]==category and r[2]==brand]
+        if not rows: continue
+        src=m.group(1); note=f"전일값({src} 수집분, 오늘 수집실패)"
+        num=lambda v: int(v) if re.fullmatch(r"-?\d+",v or "") else None   # CSV는 문자열 → DB int 컬럼용
+        longs=[[today]+r[1:8]+[num(r[8]),r[9],num(r[10])]+r[11:13]+[(r[13]+" " if r[13] else "")+note] for r in rows]
+        grids=[]
+        gfn=os.path.join(hist,f"card_grid_{src}.csv")
+        if os.path.exists(gfn):
+            with open(gfn,encoding="utf-8-sig") as f:
+                grids=[[today]+r[1:] for r in list(csv.reader(f))[1:] if len(r)>2 and r[1]==category and r[2]==brand]
+        return longs,grids
+    return [],[]
 
 def grid(tiers,kind):
     pts=sorted([(t["spend"],t["discount"]) for t in tiers if t["type"]==kind and t["spend"]])
@@ -781,7 +815,7 @@ def main():
     for fam,brand,url,parser in rental_jobs:
         try:
             cards=parser(fetch(url))
-            report.append(("렌탈",brand,len(cards),"OK"))
+            report.append(("렌탈",brand,len(cards),"OK" if cards else "0건(selector확인)"))
             for c in cards:
                 iss=guess_issuer(c["card_name"])
                 for t in c["tiers"]:
@@ -790,7 +824,10 @@ def main():
                 bs,pr=grid(c["tiers"],"기본"),grid(c["tiers"],"프로모션")
                 grids.append([today,"렌탈",brand,c["card_name"],c.get("fee","")]+[bs[g] for g in GRID]+[pr[g] for g in GRID])
         except Exception as e:
-            report.append(("렌탈",brand,0,f"FAIL: {e}")); errs.append(("렌탈",brand))
+            cl,cg=carry_forward("렌탈",brand,today)
+            longs+=cl; grids+=cg
+            tail=f" → 전일값 {len(cl)}행으로 채움" if cl else ""
+            report.append(("렌탈",brand,0,f"FAIL: {e}{tail}")); errs.append(("렌탈",brand))
 
     # ── 2) 통신 ─────────────────────────────────────────────
     for carrier,url,parser,mode in TEL_JOBS:
